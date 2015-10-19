@@ -13,7 +13,7 @@ NSDictionary *MimeTypeMappings;
 
 @implementation CordovaUpdate(WkWebViewCordovaUpdate)
 
-+ (void)load {
++ (void)pluginInitialize {
     
     MimeTypeMappings = @{
                          @"123": @"application/vnd.lotus-1-2-3",
