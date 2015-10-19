@@ -1,6 +1,6 @@
 #import <objc/runtime.h>
 
-#import "../com.meteor.cordova-update/CordovaUpdate.h"
+#import "CordovaUpdate.h"
 
 @interface CordovaUpdate (WkWebViewCordovaUpdate)
 

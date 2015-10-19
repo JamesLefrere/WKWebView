@@ -2,16 +2,20 @@
 #import "AppDelegate.h"
 #import "MyMainViewController.h"
 #import <GCDWebServer/GCDWebServer.h>
-
-MyMainViewController *myMainViewController;
+#import <GCDWebServer/GCDWebServerPrivate.h>
+#import <GCDWebServer/GCDWebServerDataResponse.h>
 
 // need to swap out a method, so swizzling it here
 static void swizzleMethod(Class class, SEL destinationSelector, SEL sourceSelector);
 
 @implementation AppDelegate (WKWebViewPolyfill)
 
+NSString *const FileSchemaConstant = @"file://";
+NSString *const ServerCreatedNotificationName = @"WKWebView.WebServer.Created";
 GCDWebServer* _webServer;
 NSMutableDictionary* _webServerOptions;
+NSString* appDataFolder;
+MyMainViewController *myMainViewController;
 
 + (void)load {
     // Swap in our own viewcontroller which loads the wkwebview, but only in case we're running iOS 8+
@@ -36,26 +40,55 @@ NSMutableDictionary* _webServerOptions;
     self.viewController = myMainViewController;
     self.window.rootViewController = myMainViewController;
     [self.window makeKeyAndVisible];
+    appDataFolder = [[NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES) objectAtIndex:0] stringByDeletingLastPathComponent];
 
-    // Initialize Server environment variables
+    // Note: the embedded webserver is still needed for iOS 9. It's not needed to load index.html,
+    //       but we need it to ajax-load files (file:// protocol has no origin, leading to CORS issues).
     NSString *directoryPath = myMainViewController.wwwFolderName;
     _webServer = [[GCDWebServer alloc] init];
     _webServerOptions = [NSMutableDictionary dictionary];
 
     // Add GET handler for local "www/" directory
-    [_webServer addGETHandlerForBasePath:@"/"
-                           directoryPath:directoryPath
-                           indexFilename:nil
-                                cacheAge:60
-                      allowRangeRequests:YES];
+    // [_webServer addGETHandlerForBasePath:@"/"
+    //                        directoryPath:directoryPath
+    //                        indexFilename:nil
+    //                             cacheAge:30
+    //                   allowRangeRequests:YES];
+
+    [[NSNotificationCenter defaultCenter] postNotificationName:ServerCreatedNotificationName object: @[myMainViewController, _webServer]];
+
+   [self addHandlerForPath:@"/Library/"];
+   [self addHandlerForPath:@"/Documents/"];
+   [self addHandlerForPath:@"/tmp/"];
 
     // Initialize Server startup
     if (startWebServer) {
-        [self startServer];
+      [self startServer];
+      [myMainViewController copyLS:_webServer.port];
     }
 
     // Update Swizzled ViewController with port currently used by local Server
     [myMainViewController setServerPort:_webServer.port];
+}
+
+- (void)addHandlerForPath:(NSString *) path {
+ [_webServer addHandlerForMethod:@"GET"
+                    pathRegex: [NSString stringWithFormat:@"^%@.*", path]
+                    requestClass:[GCDWebServerRequest class]
+                    processBlock:^GCDWebServerResponse *(GCDWebServerRequest* request) {
+                      NSString *fileLocation = request.URL.path;
+                      if ([fileLocation hasPrefix:path]) {
+                        fileLocation = [appDataFolder stringByAppendingString:request.URL.path];
+                      }
+                      
+                      fileLocation = [fileLocation stringByReplacingOccurrencesOfString:FileSchemaConstant withString:@""];
+                      if (![[NSFileManager defaultManager] fileExistsAtPath:fileLocation]) {
+                          return nil;
+                      }
+                        
+                      return [GCDWebServerFileResponse responseWithFile:fileLocation byteRange:request.byteRange];
+                    }
+  ];
 }
 
 - (BOOL)identity_application: (UIApplication *)application
@@ -77,10 +110,22 @@ NSMutableDictionary* _webServerOptions;
     [_webServerOptions setObject:[NSNumber numberWithBool:YES]
                           forKey:GCDWebServerOption_BindToLocalhost];
 
-    // Initialize Server listening port, initially trying 12344 for backwards compatibility
+    // If a fixed port is passed in, use that one, otherwise use 12344.
+    // If the port is taken though, look for a free port by adding 1 to the port until we find one.
     int httpPort = 12344;
 
-    // Start Server
+    // first we check any passed-in variable during plugin install (which is copied to plist, see plugin.xml)
+    NSNumber *plistPort = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"WKWebViewPluginEmbeddedServerPort"];
+    if (plistPort != nil) {
+      httpPort = [plistPort intValue];
+    }
+
+    // now check if it was set in config.xml - this one wins if set.
+    // (note that the settings can be in any casing, but they are stored in lowercase)
+    if ([self.viewController.settings objectForKey:@"wkwebviewpluginembeddedserverport"]) {
+      httpPort = [[self.viewController.settings objectForKey:@"wkwebviewpluginembeddedserverport"] intValue];
+    }
+
     do {
         [_webServerOptions setObject:[NSNumber numberWithInteger:httpPort++]
                               forKey:GCDWebServerOption_Port];

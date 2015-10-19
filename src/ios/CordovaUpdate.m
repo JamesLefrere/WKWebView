@@ -1,20 +1,15 @@
-#import <GCDWebServer/GCDWebServer.h>
-#import <GCDWebServer/GCDWebServerDataResponse.h>
+/********* com.meteor.cordova-update Cordova Plugin Implementation *******/
 
-#import "MyMainViewController.h"
-#import "WkWebViewCordovaUpdate.h"
+#import "CordovaUpdate.h"
 
-extern GCDWebServer* _webServer;
 extern NSString *METEORDocumentRoot;
 extern NSString *METEORCordovajsRoot;
-extern MyMainViewController *myMainViewController;
-NSDictionary *MimeTypeMappings;
+extern NSDictionary *MimeTypeMappings;
 
+@implementation CordovaUpdate
 
-@implementation CordovaUpdate(WkWebViewCordovaUpdate)
-
-+ (void)load {
-    
+- (void)pluginInitialize
+{
     MimeTypeMappings = @{
                          @"123": @"application/vnd.lotus-1-2-3",
                          @"x3d": @"application/vnd.hzn-3d-crossword",
@@ -699,269 +694,28 @@ NSDictionary *MimeTypeMappings;
                          @"zaz": @"application/vnd.zzazz.deck+xml"
                          };
     
-    [self replaceMethod:@selector(startServer:) methodToReplace:@selector(wkWebViewStartServer:)];
-    //[self replaceMethod:@selector(setLocalPath:) methodToReplace:@selector(wkWebViewSetLocalPath:)];
-    //[self replaceMethod:@selector(getCordovajsRoot:) methodToReplace:@selector(wkWebViewGetCordovajsRoot:)];
 }
 
-+(void) replaceMethod:(SEL)originalSelector methodToReplace:(SEL) swizzledSelector{
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        Class class = [self class];
-        
-        Method originalMethod = class_getInstanceMethod(class, originalSelector);
-        Method swizzledMethod = class_getInstanceMethod(class, swizzledSelector);
-        
-        // When swizzling a class method, use the following:
-        // Class class = object_getClass((id)self);
-        // ...
-        // Method originalMethod = class_getClassMethod(class, originalSelector);
-        // Method swizzledMethod = class_getClassMethod(class, swizzledSelector);
-        
-        BOOL didAddMethod =
-        class_addMethod(class,
-                        originalSelector,
-                        method_getImplementation(swizzledMethod),
-                        method_getTypeEncoding(swizzledMethod));
-        
-        if (didAddMethod) {
-            class_replaceMethod(class,
-                                swizzledSelector,
-                                method_getImplementation(originalMethod),
-                                method_getTypeEncoding(originalMethod));
-        } else {
-            method_exchangeImplementations(originalMethod, swizzledMethod);
-        }
-    });
-}
-
-- (void)wkWebViewStartServer:(CDVInvokedUrlCommand*)command
+- (void)startServer:(CDVInvokedUrlCommand*)command
 {
-    NSLog(@"WkWebViewCordovaUpdate.startServer: arguments - %@", command.arguments);
-    NSLog(@"WkWebViewCordovaUpdate.startServer: _webServer.serverURL - %@ ", _webServer.serverURL);
-    
+    NSLog(@"start serving %@", command.arguments);
     METEORDocumentRoot = [command.arguments objectAtIndex:0];
-    METEORCordovajsRoot = myMainViewController.wwwFolderName;
+    METEORCordovajsRoot = [command.arguments objectAtIndex:1];
     
-    NSString * documentsFolder = [self getAppDocumentsFolder];
-    NSLog(@"WkWebViewCordovaUpdate.startServer: documentsFolder - %@ ", documentsFolder);
+    [NSURLProtocol registerClass:[METEORCordovaURLProtocol class]];
     
-    NSLog(@"WkWebViewCordovaUpdate.startServer: METEORCordovajsRoot - %@ ", METEORCordovajsRoot);
-    
-    if(![[METEORDocumentRoot substringFromIndex:[METEORDocumentRoot length]-1]  isEqual: @"/"]){
-        METEORDocumentRoot = [NSString stringWithFormat:@"%@/",METEORDocumentRoot];
-        NSLog(@"WkWebViewCordovaUpdate.startServer: METEORDocumentRoot - %@", METEORDocumentRoot);
-    }
-
-    [_webServer addDefaultHandlerForMethod:@"GET"
-                              requestClass:[GCDWebServerRequest class]
-                              processBlock:^GCDWebServerResponse *(GCDWebServerRequest* request) {
-                                  
-                                  NSString *path = request.URL.path;
-//                                  NSString *path = [request.URL.path stringByAddingPercentEncodingWithAllowedCharacters:
-//                                                    [NSCharacterSet URLHostAllowedCharacterSet]];
-                                  
-                                  NSString *filePath;
-                                  //@"/Containers/Data/Application/[^/]*/Documents/
-                                  if([self stringMatches:path withPattern:@"/Containers/Data/Application/[^/]+/Documents/"]){
-                                      filePath = [self replaceText:path withPattern:@"^/.*/Containers/Data/Application/[^/]+/Documents" withText:documentsFolder];
-                                  } else {
-                                      filePath = [self filePathForURI:path allowDirectory:NO];
-                                      
-                                      BOOL isDir = NO;
-                                      
-                                      // XXX HACKHACK if the file not found, return the root page
-                                      if (!filePath || ![[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:&isDir] || isDir)
-                                      {
-                                          filePath = [self filePathForURI:@"/" allowDirectory:NO];
-                                      }
-                                 }
-                                  
-                                  NSLog(@"METEOR CORDOVA DEBUG loading filepath: %@ for path: %@", filePath, path);
-                                  
-                                  // set the content-type header if the extension is known
-                                  NSString * contentType = @"application/octet-stream";
-                                  if (MimeTypeMappings[[path pathExtension]]) {
-                                      contentType = MimeTypeMappings[[path pathExtension]];
-                                  }
-                                  NSLog(@"METEOR CORDOVA DEBUG contentType: %@", contentType);
-                                  
-                                  
-                                  NSData *d = [NSData dataWithContentsOfFile:filePath];
-                                  return [GCDWebServerDataResponse responseWithData:d contentType:contentType];
-                                  
-                              }];
-    
-    // Add GET handler for meteor app directory
-    /*[_webServer addGETHandlerForBasePath:@"/"
-     directoryPath:METEORDocumentRoot
-     indexFilename:@"index.html"
-     cacheAge:60
-     allowRangeRequests:YES];
-     */
-    
-    
-    // Add GET handler for cordova.js to be served from cordova www folder
-    /*[_webServer addGETHandlerForPath:@"/cordova.js"
-     filePath:[myMainViewController.wwwFolderName stringByAppendingPathComponent:@"cordova.js"]
-     isAttachment:NO
-     cacheAge:60
-     allowRangeRequests:YES];*/
-//    NSString * serverUrl = [_webServer.serverURL absoluteString];
-//    if([serverUrl hasSuffix:@"/"]){
-//        serverUrl = [serverUrl substringToIndex:[serverUrl length]-1];
-//    }
-    NSString* serverUrl =  [NSString stringWithFormat:@"http://localhost:%lu", (unsigned long)_webServer.port];
-    
-    NSLog(@"WkWebViewCordovaUpdate.startServer: serverUrl - %@", serverUrl);
-    
-    [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:serverUrl] callbackId:command.callbackId];
+    [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"http://meteor.local"] callbackId:command.callbackId];
 }
 
-- (void)wkWebViewSetLocalPath:(CDVInvokedUrlCommand*)command
+- (void)setLocalPath:(CDVInvokedUrlCommand*)command
 {
-    NSLog(@"WkWebViewCordovaUpdate.setLocalPath: %@", command.arguments);
-    //  METEORDocumentRoot = [command.arguments objectAtIndex:0];
-    [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"/"] callbackId:command.callbackId];
+    METEORDocumentRoot = [command.arguments objectAtIndex:0];
+    [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:nil] callbackId:command.callbackId];
 }
 
-- (void)wkWebViewGetCordovajsRoot:(CDVInvokedUrlCommand*)command
+- (void)getCordovajsRoot:(CDVInvokedUrlCommand*)command
 {
-    NSLog(@"WkWebViewCordovaUpdate.getCordovajsRoot: %@", command.arguments);
-    //  [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:METEORCordovajsRoot] callbackId:command.callbackId];
-}
-
-- (NSString *)getAppDocumentsFolder {
-    return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES) lastObject];
-}
-
-- (NSRegularExpression *)regularExpressionWithString:(NSString *)pattern
-{
-    NSError *error = NULL;
-    NSRegularExpressionOptions regexOptions = NSRegularExpressionCaseInsensitive;
-    
-    NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:pattern options:regexOptions error:&error];
-    if (error)
-    {
-        NSLog(@"Couldn't create regex with given string and options");
-    }
-    
-    return regex;
-}
-
-- (NSString*)replaceText:(NSString *)string withPattern:(NSString*)searchString withText:(NSString *)replacementString{
-    NSRange range = NSMakeRange(0, string.length);
-    NSRegularExpression *regex = [self regularExpressionWithString:searchString];
-    NSString * stringResult = [regex stringByReplacingMatchesInString:string options:0 range:range withTemplate:replacementString];
-    return stringResult;
-}
-
-- (BOOL)stringMatches:(NSString *)string withPattern:(NSString *)pattern
-{
-    NSError *error = nil;
-    NSRegularExpression *regex = [NSRegularExpression regularExpressionWithPattern:pattern options:NSRegularExpressionCaseInsensitive error:&error];
-    
-    NSAssert(regex, @"Unable to create regular expression");
-    
-    NSRange textRange = NSMakeRange(0, string.length);
-    NSRange matchRange = [regex rangeOfFirstMatchInString:string options:NSMatchingReportProgress range:textRange];
-    
-    BOOL matched = NO;
-    
-    // Did we find a matching range
-    if (matchRange.location != NSNotFound)
-        matched = YES;
-    
-    return matched;
-}
-
-/**
- * Converts relative URI path into full file-system path.
- **/
-- (NSString *)filePathForURI:(NSString *)path allowDirectory:(BOOL)allowDirectory
-{
-    NSString *documentRoot = METEORDocumentRoot;
-    // Part 1: Strip parameters from the url
-    // E.g.: /page.html?q=22&var=abc -> /page.html
-    
-    NSURL *docRoot = [NSURL fileURLWithPath:documentRoot isDirectory:YES];
-    if (docRoot == nil)
-    {
-        return nil;
-    }
-    
-    NSString *relativePath = [[NSURL URLWithString:path relativeToURL:docRoot] relativePath];
-    
-    // Part 2: Append relative path to document root (base path)
-    // E.g.: relativePath="/images/icon.png"
-    //       documentRoot="/Users/robbie/Sites"
-    //           fullPath="/Users/robbie/Sites/images/icon.png"
-    // We also standardize the path.
-    // E.g.: "Users/robbie/Sites/images/../index.html" -> "/Users/robbie/Sites/index.html"
-    
-    NSString *fullPath = [[documentRoot stringByAppendingPathComponent:relativePath] stringByStandardizingPath];
-    
-    if ([relativePath isEqualToString:@"/"])
-    {
-        fullPath = [fullPath stringByAppendingString:@"/"];
-    }
-    
-    // Part 3: Prevent serving files outside the document root.
-    // Sneaky requests may include ".." in the path.
-    // E.g.: relativePath="../Documents/TopSecret.doc"
-    //       documentRoot="/Users/robbie/Sites"
-    //           fullPath="/Users/robbie/Documents/TopSecret.doc"
-    // E.g.: relativePath="../Sites_Secret/TopSecret.doc"
-    //       documentRoot="/Users/robbie/Sites"
-    //           fullPath="/Users/robbie/Sites_Secret/TopSecret"
-    // XXX Actually allow this
-    
-    if (false) {
-        if (![documentRoot hasSuffix:@"/"])
-        {
-            documentRoot = [documentRoot stringByAppendingString:@"/"];
-        }
-        
-        if (![fullPath hasPrefix:documentRoot])
-        {
-            return nil;
-        }
-    }
-    
-    // Part 4: Search for index page if path is pointing to a directory
-    if (!allowDirectory)
-    {
-        BOOL isDir = NO;
-        if ([[NSFileManager defaultManager] fileExistsAtPath:fullPath isDirectory:&isDir] && isDir)
-        {
-            NSArray *indexFileNames = [self directoryIndexFileNames];
-            
-            for (NSString *indexFileName in indexFileNames)
-            {
-                NSString *indexFilePath = [fullPath stringByAppendingPathComponent:indexFileName];
-                
-                if ([[NSFileManager defaultManager] fileExistsAtPath:indexFilePath isDirectory:&isDir] && !isDir)
-                {
-                    return indexFilePath;
-                }
-            }
-            
-            // No matching index files found in directory
-            return nil;
-        }
-    }
-    
-    // XXX HACKHACK serve cordova.js from the containing folder
-    NSString *decodedPath = [path stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
-    if ([decodedPath isEqualToString:@"/cordova.js"] || [decodedPath isEqualToString:@"/cordova_plugins.js"] || [decodedPath hasPrefix:@"/plugins/"])
-        return [[METEORCordovajsRoot stringByAppendingPathComponent:decodedPath] stringByStandardizingPath];
-    
-    return fullPath;
-}
-
-- (NSArray *)directoryIndexFileNames
-{
-    return [NSArray arrayWithObjects:@"index.html", @"index.htm", nil];
+    [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:METEORCordovajsRoot] callbackId:command.callbackId];
 }
 
 @end
